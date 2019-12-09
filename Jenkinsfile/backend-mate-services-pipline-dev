@@ -1,0 +1,69 @@
+pipeline{
+    agent any
+    stages {
+        stage('maven编译打包代码') {
+            steps{
+                sh '''
+                # 将多个微服务列表拆分成数组
+				mate_group_service_dev_arr=(${mate_service_dev//,/ })
+
+				# 先检查有否含有所需的common 版本；再进行maven编译打包代码
+				for i in ${mate_group_service_dev_arr[@]}
+				do
+					git clone git@git.gymbomate.com:$i.git				# 拉取代码
+					service=(${i//// })								# 获取微服务名
+					cd ${service[1]}									# 进入项目
+					git checkout dev									# 进入dev分支
+					version_line=`sed -n '/<artifactId>mate-common-service/{n;p}' pom.xml`		# 查找pom.xml文件中common版本号
+					common_version_list=(`ls ~/.m2/repository/com/gymbomate/common/mate-common-service`)		# 遍历common库，找出所有版本号
+					echo "common_version_list: $common_version_list"
+					num=0
+					for common_version in ${common_version_list[@]}											# 遍历common库，和当前pom.xml中common版本号做对比
+					do
+						if [[ "$version_line" =~ "$common_version" ]];then
+						echo "这个版本号$common_version在common中存在，所以不用编译common service"
+						num=1
+						break
+						fi
+					done
+					if [[ $num == 0 ]];then
+						echo "检测到没有最新的common 版本，先打包common service"
+						/usr/bin/java -jar /root/jenkins-cli.jar -auth iris:c704a1f555c4d77923f2b317bfd032eb -s http://172.16.13.101:8080/ build backend-mate-common-service-dev &
+						sleep 90
+					fi
+                    export  JAVA_HOME=/usr/java/jdk1.8.0_171
+                    export  CLASSPATH=.:$JAVA_HOME/jre/lib/rt.jar:$JAVA_HOME/lib/dt.jar:$JAVA_HOME/lib/tools.jar
+                    export  PATH=$PATH:$JAVA_HOME/bin
+					nohup /opt/apache-maven-3.3.9/bin/mvn -U clean install > myout.file 2>&1 &		# maven编译打包代码
+					cd ..
+				done
+				wait
+
+                '''
+            }
+        }
+        stage('生成镜像并推送到阿里云') {
+            steps{
+                sh '''
+				mate_group_service_dev_arr=(${mate_service_dev//,/ })
+				for i in ${mate_group_service_dev_arr[@]}
+				do
+					service=(${i//// })
+					cd ${service[1]}
+					git checkout dev
+					docker build -t com.gymbomate/${service[1]} .
+					docker tag com.gymbomate/${service[1]} registry.cn-shanghai.aliyuncs.com/gymboglobal-backend/${service[1]}:iris-test
+					docker push registry.cn-shanghai.aliyuncs.com/gymboglobal-backend/${service[1]}:iris-test
+					cd ..
+				done
+				'''
+            }
+        }
+
+    }
+    post {
+        always {
+            cleanWs()
+        }
+    }
+}
