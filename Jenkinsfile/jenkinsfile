@@ -1,0 +1,73 @@
+pipeline{
+    agent any
+    parameters{
+        choice(name: "SERVICE_NAME",
+        choices: ["null","xxx/xxx","xxx/xxx","xxx/xxx"],        # 需要手动配置
+        description: "")
+
+        choice(name: "BRANCH",
+        choices: ["dev"],
+        description: "")
+    }
+
+
+    stages {
+        stage('拉取代码') {
+            steps{
+                sh '''
+                    ls
+                    echo "拉取微服务代码：$SERVICE_NAME"
+                    git clone git@xxx:$SERVICE_NAME.git       # 需要手动配置；拉取代码
+                 '''
+            }
+        }
+
+        stage('检查common 版本') {
+            steps{
+                sh "python check_common_version.py -s $SERVICE_NAME -b $BRANCH"
+            }
+        }
+
+        stage('打包编译') {
+            steps{
+                sh '''
+                    service=(${SERVICE_NAME//// })
+                    cd ${service[1]}
+                    git checkout $BRANCH
+                    export  JAVA_HOME=/usr/java/jdk1.8.0_171
+                    export  CLASSPATH=.:$JAVA_HOME/jre/lib/rt.jar:$JAVA_HOME/lib/dt.jar:$JAVA_HOME/lib/tools.jar
+                    export  PATH=$PATH:$JAVA_HOME/bin
+					/opt/apache-maven-3.3.9/bin/mvn -U clean install 		# maven编译打包代码
+					echo '执行结果：代码打包编译完成'
+                '''
+            }
+        }
+        stage('镜像推送到阿里云') {
+            steps{
+                sh '''
+                    service=(${SERVICE_NAME//// })
+                    cd ${service[1]}
+                    docker build -t xxx/${service[1]} .                                                                  # 需要手动配置
+                    docker tag xxx/${service[1]} xxx/${service[1]}:latest                                                # 需要手动配置
+                    docker push xxx/${service[1]}:latest                                                                 # 需要手动配置
+                    echo '执行结果：docker镜像已经上传到阿里云镜像仓库'
+				'''
+            }
+        }
+
+        stage('rancher自动升级微服务') {
+            steps{
+                sh "python jenkins_rancher_build.py -s $SERVICE_NAME -b $BRANCH"
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "清理工作目录"
+            cleanWs()
+        }
+    }
+}
+
+
